@@ -95,10 +95,71 @@ Save each part to the corresponding filename when deploying.
       </div>
 
       <div class="meta">Installieren als App: Browsermenü → "Zum Startbildschirm hinzufügen" (oder Manifest wird angeboten)</div>
+      <div class="control-row" style="margin-top:16px;flex-direction:column;align-items:flex-start">
+        <div class="meta">Songs</div>
+        <div style="display:flex;gap:8px;margin:6px 0">
+          <button id="importJsonBtn">JSON importieren</button>
+          <button id="exportJsonBtn">JSON exportieren</button>
+        </div>
+        <select id="songSelect" size="6" style="width:100%;background:transparent;color:var(--fg);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:6px"></select>
+        <button id="loadSongBtn" style="margin-top:8px">Song laden</button>
+      </div>
     </aside>
   </div>
 
 <script>
+// --- Song JSON manager ---
+let songDB = {};
+const songSelect = document.getElementById('songSelect');
+const loadSongBtn = document.getElementById('loadSongBtn');
+const importJsonBtn = document.getElementById('importJsonBtn');
+const exportJsonBtn = document.getElementById('exportJsonBtn');
+
+function refreshSongList(){
+  songSelect.innerHTML = '';
+  Object.keys(songDB).forEach(name=>{
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    songSelect.appendChild(opt);
+  });
+}
+
+loadSongBtn.addEventListener('click', ()=>{
+  const name = songSelect.value;
+  if(!name) return;
+  lyricsInput.value = songDB[name].join("
+");
+  applyBtn.click();
+});
+
+importJsonBtn.addEventListener('click', ()=>{
+  const text = prompt('JSON einfügen:');
+  if(!text) return;
+  try{
+    const data = JSON.parse(text);
+    if(typeof data !== 'object') return;
+    songDB = data;
+    refreshSongList();
+  } catch(e){ alert('Ungültiges JSON'); }
+});
+
+exportJsonBtn.addEventListener('click', ()=>{
+  const out = JSON.stringify(songDB, null, 2);
+  navigator.clipboard.writeText(out).then(()=>alert('JSON kopiert.')).catch(()=>alert(out));
+});
+
+// When user clicks apply after editing lyrics, allow saving
+applyBtn.addEventListener('click', ()=>{
+  const name = prompt('Songname speichern als (optional):');
+  if(name){
+    const lines = lyricsInput.value.split(/
+?
+/);
+    songDB[name] = lines;
+    refreshSongList();
+  }
+});
 // --- Core logic: smooth auto-scroll using requestAnimationFrame ---
 const lyricsContainer = document.getElementById('lyricsContainer');
 const fontRange = document.getElementById('fontRange');
@@ -227,3 +288,8 @@ if('serviceWorker' in navigator){
 
 </body>
 </html>
+
+
+/* sw.js (save as separate file) */
+
+

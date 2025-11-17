@@ -1,3 +1,4 @@
+
 self.addEventListener('install', event => {
   self.skipWaiting();
   event.waitUntil(caches.open('lyrics-pwa-v1').then(cache => {
