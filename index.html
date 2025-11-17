@@ -1,0 +1,229 @@
+<!--
+Files included in this single code view:
+- index.html       (main single-file PWA app)
+- sw.js            (service worker)
+- manifest.json    (web app manifest)
+
+Save each part to the corresponding filename when deploying.
+-->
+
+<!-- index.html -->
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lyrics Scroller — PWA</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0b1220">
+  <style>
+    :root{
+      --bg:#0b1220;
+      --fg:#f7f7f7;
+      --accent:#4fd1c5;
+      --font-size:28px; /* default */
+    }
+    html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial}
+    body{background:linear-gradient(180deg,#071028,var(--bg));color:var(--fg);display:flex;align-items:stretch}
+    .app{max-width:980px;margin:auto;padding:18px;display:grid;grid-template-columns:1fr 360px;gap:18px;width:100%}
+    .player{background:rgba(255,255,255,0.03);border-radius:12px;padding:12px;box-shadow:0 6px 18px rgba(0,0,0,0.4)}
+    .stage{height:78vh;overflow:hidden;border-radius:8px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);position:relative}
+    .lyrics{position:absolute;left:0;right:0;top:0;padding:40px 20px;font-size:var(--font-size);line-height:1.35;white-space:pre-wrap;text-align:center}
+    .controls{display:flex;flex-direction:column;gap:12px}
+    .control-row{display:flex;gap:8px;align-items:center}
+    label{font-size:13px;color:rgba(255,255,255,0.7)}
+    input[type=range]{width:100%}
+    textarea{width:100%;height:160px;background:transparent;color:var(--fg);border:1px dashed rgba(255,255,255,0.06);padding:8px;border-radius:6px}
+    button{background:var(--accent);border:none;padding:10px;border-radius:8px;color:#062024;font-weight:600}
+    .small{font-size:12px;color:rgba(255,255,255,0.6)}
+    .row-space{display:flex;align-items:center;justify-content:space-between}
+    .meta{font-size:12px;color:rgba(255,255,255,0.6)}
+    .hint{font-size:12px;color:rgba(255,255,255,0.5)}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="player">
+      <div class="stage" id="stage">
+        <div class="lyrics" id="lyricsContainer" aria-live="polite" tabindex="0">
+          <!-- default sample lyrics -->
+          <div>Sample Lyrics — füge hier deine Lyrics ein oder lade eine .lrc Datei</div>
+          <div></div>
+          <div>Diese Zeile scrollt über den Bildschirm.</div>
+          <div>Passe Größe und Geschwindigkeit an.</div>
+          <div>Play / Pause — Loop verfügbar.</div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="controls">
+      <div class="control-row row-space">
+        <div>
+          <div class="meta">Textgröße</div>
+          <div class="small"><span id="fontLabel">28</span> px</div>
+        </div>
+        <input id="fontRange" type="range" min="12" max="120" value="28">
+      </div>
+
+      <div class="control-row">
+        <div style="flex:1">
+          <label for="speedRange">Geschwindigkeit</label>
+          <div class="small"><span id="speedLabel">40</span> px/s</div>
+          <input id="speedRange" type="range" min="5" max="300" value="40">
+        </div>
+      </div>
+
+      <div class="control-row">
+        <button id="playBtn">Play</button>
+        <button id="pauseBtn">Pause</button>
+        <button id="resetBtn">Zurücksetzen</button>
+      </div>
+
+      <div class="control-row">
+        <label><input id="loopChk" type="checkbox"> Loop</label>
+        <label style="margin-left:8px"><input id="centerChk" type="checkbox" checked> Zentrieren</label>
+      </div>
+
+      <div>
+        <label class="meta">Lyrics (einfügen / bearbeiten)</label>
+        <textarea id="lyricsInput" placeholder="Füge hier die Lyrics ein. Leere Zeilen erzeugen Abstand. Jede Zeile wird als separate Textzeile angezeigt."></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button id="applyBtn">Anwenden</button>
+          <button id="importLrcBtn">.lrc import (einfach)</button>
+        </div>
+        <div class="hint">Tipp: Für Karaoke: markiere aktuelle Zeile via Doppelklick auf die Anzeige.</div>
+      </div>
+
+      <div class="meta">Installieren als App: Browsermenü → "Zum Startbildschirm hinzufügen" (oder Manifest wird angeboten)</div>
+    </aside>
+  </div>
+
+<script>
+// --- Core logic: smooth auto-scroll using requestAnimationFrame ---
+const lyricsContainer = document.getElementById('lyricsContainer');
+const fontRange = document.getElementById('fontRange');
+const fontLabel = document.getElementById('fontLabel');
+const speedRange = document.getElementById('speedRange');
+const speedLabel = document.getElementById('speedLabel');
+const playBtn = document.getElementById('playBtn');
+const pauseBtn = document.getElementById('pauseBtn');
+const resetBtn = document.getElementById('resetBtn');
+const applyBtn = document.getElementById('applyBtn');
+const lyricsInput = document.getElementById('lyricsInput');
+const loopChk = document.getElementById('loopChk');
+const centerChk = document.getElementById('centerChk');
+const importLrcBtn = document.getElementById('importLrcBtn');
+
+let running = false;
+let lastTime = null;
+let scrollY = 0; // px scrolled from start
+let speed = Number(speedRange.value); // px per second
+let stageHeight = document.getElementById('stage').clientHeight;
+
+function applyFontSize(v){
+  document.documentElement.style.setProperty('--font-size', v + 'px');
+  fontLabel.textContent = v;
+}
+
+function applySpeed(v){
+  speed = Number(v);
+  speedLabel.textContent = v;
+}
+
+fontRange.addEventListener('input', e=>applyFontSize(e.target.value));
+speedRange.addEventListener('input', e=>applySpeed(e.target.value));
+
+applyBtn.addEventListener('click', ()=>{
+  const raw = lyricsInput.value.trim();
+  const lines = raw.split(/\r?\n/).filter((l,i)=>true); // keep empty lines as spacing
+  renderLines(lines);
+  resetScroll();
+});
+
+importLrcBtn.addEventListener('click', ()=>{
+  // very small .lrc support: strip timestamps and show lyrics lines
+  const raw = lyricsInput.value.trim();
+  const lines = raw.split(/\r?\n/).map(l=>l.replace(/\[[0-9:.]+\]/g,'').trim()).filter(l=>l.length>0);
+  renderLines(lines);
+  resetScroll();
+});
+
+function renderLines(lines){
+  lyricsContainer.innerHTML = '';
+  lines.forEach((l)=>{
+    const el = document.createElement('div');
+    el.textContent = l || '\u00A0';
+    el.addEventListener('dblclick', ()=>{
+      // center clicked line
+      const rect = el.getBoundingClientRect();
+      const stageRect = document.getElementById('stage').getBoundingClientRect();
+      const offset = rect.top - stageRect.top - (stageRect.height/2 - rect.height/2);
+      scrollY += offset;
+      clampScroll();
+    });
+    lyricsContainer.appendChild(el);
+  });
+}
+
+function clampScroll(){
+  const max = Math.max(0, lyricsContainer.scrollHeight - stageHeight + 40);
+  if(scrollY < 0) scrollY = 0;
+  if(scrollY > max) scrollY = loopChk.checked ? 0 : max;
+}
+
+function resetScroll(){
+  scrollY = 0;
+  lastTime = null;
+  updatePositionImmediate();
+}
+
+function updatePositionImmediate(){
+  lyricsContainer.style.transform = `translateY(${-scrollY}px)`;
+  if(centerChk.checked){
+    // vertical centering tweak: add top padding so first line begins around center
+    const padTop = Math.max(0,(stageHeight/2 - 40));
+    lyricsContainer.style.paddingTop = padTop + 'px';
+  } else {
+    lyricsContainer.style.paddingTop = '40px';
+  }
+}
+
+function tick(ts){
+  if(!running){ lastTime = null; return; }
+  if(!lastTime) lastTime = ts;
+  const dt = (ts - lastTime)/1000; // seconds
+  lastTime = ts;
+  scrollY += speed * dt;
+  clampScroll();
+  updatePositionImmediate();
+  // stop when reached end and not looping
+  const endReached = scrollY >= Math.max(0, lyricsContainer.scrollHeight - stageHeight + 40);
+  if(endReached && !loopChk.checked){ running = false; playBtn.disabled=false; pauseBtn.disabled=true; return; }
+  requestAnimationFrame(tick);
+}
+
+playBtn.addEventListener('click', ()=>{
+  if(running) return; running = true; playBtn.disabled=true; pauseBtn.disabled=false; requestAnimationFrame(tick);
+});
+pauseBtn.addEventListener('click', ()=>{ running=false; playBtn.disabled=false; pauseBtn.disabled=true; });
+resetBtn.addEventListener('click', ()=>{ resetScroll(); running=false; playBtn.disabled=false; pauseBtn.disabled=true; });
+
+// responsive: update stageHeight on resize
+window.addEventListener('resize', ()=>{ stageHeight = document.getElementById('stage').clientHeight; updatePositionImmediate(); });
+
+// init
+applyFontSize(Number(fontRange.value)); applySpeed(Number(speedRange.value)); updatePositionImmediate(); pauseBtn.disabled=true;
+
+// quick keyboard controls: space = toggle
+window.addEventListener('keydown',(e)=>{
+  if(e.code==='Space'){ e.preventDefault(); if(running){ pauseBtn.click(); } else { playBtn.click(); }}
+});
+
+// register service worker
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/sw.js').catch(()=>{});
+}
+</script>
+
+</body>
+</html>
